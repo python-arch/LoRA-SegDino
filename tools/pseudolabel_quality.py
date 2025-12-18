@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 
 from segdino.corruption_transform import CorruptionTransform
 from segdino.corruptions import CorruptionSpec, MixedCorruptionSpec
-from segdino.data import ManifestSegmentationDataset, ResizeAndNormalize
+from segdino.data import ManifestSegmentationDataset, ResizeAndNormalize, collate_seg_samples
 from segdino.metrics import boundary_fscore, dice_iou_binary, hd95_binary
 
 
@@ -101,27 +101,23 @@ def main() -> None:
         image_pre_transform=pre,
         strict_pair=True,
     )
-    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, drop_last=False)
+    loader = DataLoader(
+        ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        drop_last=False,
+        collate_fn=collate_seg_samples,
+    )
 
     out_csv = Path(args.out_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
 
     rows: List[Dict[str, object]] = []
     for batch in loader:
-        # default collate for dataclasses -> dict of tensors and dict of lists
-        if isinstance(batch, dict):
-            inputs = batch["image"]
-            targets = batch["mask"]
-            ids = batch["meta"]["id"] if isinstance(batch.get("meta"), dict) and "id" in batch["meta"] else None
-        else:
-            inputs = batch.image
-            targets = batch.mask
-            ids = [batch.meta["id"]]
-
-        if inputs.ndim == 3:
-            inputs = inputs.unsqueeze(0)
-        if targets is not None and targets.ndim == 3:
-            targets = targets.unsqueeze(0)
+        inputs = batch["image"]
+        targets = batch["mask"]
+        ids = batch["meta"]["id"]
 
         inputs = inputs.to(device)
         targets = targets.to(device)
@@ -132,7 +128,7 @@ def main() -> None:
 
         b = inputs.size(0)
         for i in range(b):
-            image_id = ids[i] if ids is not None else f"case_{len(rows):05d}"
+            image_id = ids[i] if isinstance(ids, list) else str(ids)
             p = probs[i, 0].detach().cpu().numpy()
             pr = (preds[i, 0].detach().cpu().numpy() > 0.5)
             gt = (targets[i, 0].detach().cpu().numpy() > 0.5)
@@ -187,4 +183,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

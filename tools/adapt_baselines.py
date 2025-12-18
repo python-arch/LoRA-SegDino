@@ -15,7 +15,13 @@ from torch.utils.data import DataLoader
 
 from segdino.corruption_transform import CorruptionTransform
 from segdino.corruptions import CorruptionSpec, MixedCorruptionSpec
-from segdino.data import ManifestConsistencyDataset, ManifestSegmentationDataset, ResizeAndNormalize
+from segdino.data import (
+    ManifestConsistencyDataset,
+    ManifestSegmentationDataset,
+    ResizeAndNormalize,
+    collate_seg_samples,
+    collate_seg_views_samples,
+)
 from segdino.metrics import RunningStats, boundary_fscore, dice_iou_binary, hd95_binary
 from segdino.views import WeakStrongViewTransform
 
@@ -196,6 +202,7 @@ def main() -> None:
         num_workers=args.num_workers,
         pin_memory=(device == "cuda"),
         drop_last=True,
+        collate_fn=collate_seg_views_samples,
     )
 
     eval_tf = ResizeAndNormalize(size=(args.input_h, args.input_w))
@@ -210,7 +217,14 @@ def main() -> None:
         image_pre_transform=pre,
         strict_pair=True,
     )
-    eval_loader = DataLoader(eval_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, pin_memory=(device == "cuda"))
+    eval_loader = DataLoader(
+        eval_ds,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=(device == "cuda"),
+        collate_fn=collate_seg_samples,
+    )
 
     # configure trainable parameters per method
     if args.method == "tent":
@@ -307,4 +321,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

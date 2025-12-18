@@ -277,3 +277,52 @@ Validation:
 4. Stage 4 (`E_θ` training) — train once and freeze.
 5. Stage 7 (symbolic EMA + alignment) — implement full method + causality ablations.
 6. Stage 8–10 (metrics, orchestration, paper artifacts).
+
+## Implementation status (what exists in code now)
+This section is a living checklist to keep the plan synchronized with what is actually implemented in the repo.
+
+### Completed
+- Stage 1 (split manifests)
+  - Generator: `tools/make_target_splits.py`
+  - Manifest docs: `splits/README.md`
+  - Typical outputs: `splits/kvasir_target_adapt.txt`, `splits/kvasir_target_holdout.txt`, `splits/kvasir_target_splits.json`
+- Stage 2 (corruptions, deterministic seeding)
+  - Corruption specs + implementation: `corruptions.py`
+  - Wrapper hook for datasets: `corruption_transform.py`
+  - Preview utility: `tools/preview_corruption.py`
+  - Supported:
+    - single-family: `blur`, `noise`, `jpeg`, `illumination`
+    - mixed: `mixed` with `--num_ops` up to 4
+    - severity ladder currently supports `S0..S8` in `corruptions.py` (protocol still reports `S0..S4` as the main ladder unless explicitly extended).
+- Stage 3 (manifest-aware datasets + view generation)
+  - Dataset utilities: `data.py`
+    - `ManifestSegmentationDataset` (mask-supervised loading, manifest-driven)
+    - `ManifestConsistencyDataset` (weak/strong views for consistency, manifest-driven)
+    - `image_pre_transform(img_bgr, image_id)` hook for corruptions
+  - Weak/strong views: `views.py` via `WeakStrongViewTransform`
+- Stage 8 (metrics)
+  - Shared metrics: `metrics.py` (Dice/IoU, Boundary F-score, HD95, failure rates accumulator)
+- Stage 6 (baseline evaluation utilities)
+  - Corruption curve evaluator: `tools/eval_corruption_curve.py` (includes mixed support)
+
+### Newly added for “Step 1/2” execution
+- Step 1 (pseudo-label quality diagnostics)
+  - Tool: `tools/pseudolabel_quality.py`
+  - Output: per-image CSV with confidence/entropy proxies under a chosen corruption regime.
+- Step 2 (source-free adaptation baselines)
+  - Tool: `tools/adapt_baselines.py`
+  - Methods: `entropy`, `consistency`, `selftrain`, `tent`
+  - Adapt split: `target_adapt` manifest (unlabeled)
+  - Eval split: `target_holdout` manifest (labeled)
+  - Convenience runner: `tools/run_baseline_suite.sh` (runs all 4 methods into one CSV)
+
+### In progress / next
+- Stage 5 (pluggable PEFT adapter framework + budget matching)
+  - Implement adapter registry + LoRA/SALT knobs in a shared module (avoid duplicating logic between scripts/tools).
+- Stage 4 (`E_θ` learned symbolic encoder pretraining)
+  - Implement encoder, mask augmentations, and a training script; save weights under `runs/`.
+- Stage 7 (symbolic EMA priors + two-scale alignment loss)
+  - Implement EMA stats, gating, robust distances, and ramp schedule; integrate into adaptation runner.
+
+### Notes on repo layout in the cluster
+If the repo is checked out under a parent folder named `segdino` and run as a module (e.g. `python -m segdino.tools.eval_corruption_curve`), keep `PYTHONPATH` set to the repo root and ensure the scripts import from the same package namespace consistently.

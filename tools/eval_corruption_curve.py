@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 
 from segdino.corruption_transform import CorruptionTransform
 from segdino.corruptions import CorruptionSpec, MixedCorruptionSpec
-from segdino.data import ManifestSegmentationDataset, ResizeAndNormalize
+from segdino.data import ManifestSegmentationDataset, ResizeAndNormalize, collate_seg_samples
 from segdino.metrics import RunningStats, boundary_fscore, dice_iou_binary, hd95_binary
 
 
@@ -159,11 +159,6 @@ def main() -> None:
             image_pre_transform=pre,
             strict_pair=True,
         )
-        def collate_one(batch):
-            #TODO : need to adjust for bat size>1
-            # batch is a list of SegSample; for batch_size=1 return the item directly 
-            return batch[0] if len(batch) == 1 else batch
-
         loader = DataLoader(
             ds,
             batch_size=args.batch_size,
@@ -171,7 +166,7 @@ def main() -> None:
             num_workers=args.num_workers,
             pin_memory=(device == "cuda"),
             drop_last=False,
-            collate_fn=collate_one,
+            collate_fn=collate_seg_samples,
         )
 
 

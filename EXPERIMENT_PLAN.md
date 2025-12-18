@@ -37,6 +37,8 @@ Headline reporting aggregates across families (average AUSC and S4; also provide
 #### Stage 2 (appendix): mixed corruptions
 Per image, compose 1–2 corruptions sampled deterministically (same seed scheme), to emulate “in-the-wild” shifts.
 
+**Implementation note (current code):** mixed corruptions support `num_ops` up to 4 families and severity up to `S8`. The paper’s main ladder remains `S0..S4` unless explicitly extended.
+
 ### “Source-free” enforcement
 During adaptation:
 - No access to `segdata/kvasir/train/*`
@@ -148,6 +150,34 @@ Headline reporting:
 Reproducibility:
 - 3 seeds minimum for headline tables
 - Fixed filelists for splits and fixed corruption spec (IDs + severity mapping committed)
+
+## Reproducibility artifacts (what to run)
+This section records the concrete tooling used to instantiate the protocol.
+
+### Split generation
+- Generate deterministic manifests:
+  - `python tools/make_target_splits.py --dataset_root ./segdata/kvasir --base_split test --img_dir_name images --mask_dir_name masks --holdout_ratio 0.2 --seed 42 --out_dir ./splits --prefix kvasir`
+- Outputs:
+  - `splits/kvasir_target_adapt.txt`
+  - `splits/kvasir_target_holdout.txt`
+  - `splits/kvasir_target_splits.json`
+
+### Corruption preview (sanity)
+- `python tools/preview_corruption.py --image <path/to/img.jpg> --out ./runs/preview.jpg --family mixed --severity 4 --num_ops 4`
+
+### Source-only degradation curves
+- Evaluate a fixed checkpoint across severities:
+  - `python tools/eval_corruption_curve.py --dataset_root ./segdata/kvasir --manifest ./splits/kvasir_target_holdout.txt --family noise --max_severity 4 --ckpt <seg_ckpt.pth> --dino_ckpt <dinov3.pth> --dino_size s --repo_dir ./dinov3 --out_csv ./runs/source_only_noise_curve.csv`
+
+### Pseudo-label quality diagnostics (stress regime justification)
+- Per-image confidence/entropy proxies (e.g. `mixed ops4 S4`):
+  - `python tools/pseudolabel_quality.py --dataset_root ./segdata/kvasir --manifest ./splits/kvasir_target_holdout.txt --family mixed --num_ops 4 --severity 4 --ckpt <seg_ckpt.pth> --dino_ckpt <dinov3.pth> --dino_size s --repo_dir ./dinov3 --out_csv ./runs/pseudolabel_quality_mixed_ops4_S4.csv`
+
+### Source-free baseline adaptation (adapt on target_adapt, eval on target_holdout)
+- Single baseline run:
+  - `python tools/adapt_baselines.py --dataset_root ./segdata/kvasir --adapt_manifest ./splits/kvasir_target_adapt.txt --eval_manifest ./splits/kvasir_target_holdout.txt --corruption mixed --severity 4 --num_ops 4 --method consistency --steps 500 --batch_size 4 --lr 1e-4 --ckpt <seg_ckpt.pth> --dino_ckpt <dinov3.pth> --repo_dir ./dinov3 --out_csv ./runs/adapt_baselines_mixed_ops4_S4.csv`
+- Full baseline suite (entropy/consistency/selftrain/tent):
+  - `bash tools/run_baseline_suite.sh --dataset_root ./segdata/kvasir --adapt_manifest ./splits/kvasir_target_adapt.txt --eval_manifest ./splits/kvasir_target_holdout.txt --corruption mixed --severity 4 --num_ops 4 --ckpt <seg_ckpt.pth> --dino_ckpt <dinov3.pth> --repo_dir ./dinov3 --out_csv ./runs/adapt_baselines_mixed_ops4_S4.csv`
 
 ## Model selection / stopping (no label leakage)
 If any early stopping is used, it must be **unsupervised**, e.g.:

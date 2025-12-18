@@ -90,6 +90,32 @@ class SegViewsSample:
     mask: Optional[torch.Tensor]
     meta: Dict[str, str]
 
+def collate_seg_samples(batch: List[SegSample]) -> Dict[str, object]:
+    images = torch.stack([b.image for b in batch], dim=0)
+    masks: Optional[torch.Tensor]
+    if batch[0].mask is None:
+        masks = None
+    else:
+        masks = torch.stack([b.mask for b in batch if b.mask is not None], dim=0)
+    meta: Dict[str, List[str]] = {}
+    for k in batch[0].meta.keys():
+        meta[k] = [b.meta.get(k, "") for b in batch]
+    return {"image": images, "mask": masks, "meta": meta}
+
+
+def collate_seg_views_samples(batch: List[SegViewsSample]) -> Dict[str, object]:
+    weak = torch.stack([b.weak for b in batch], dim=0)
+    strong = torch.stack([b.strong for b in batch], dim=0)
+    masks: Optional[torch.Tensor]
+    if batch[0].mask is None:
+        masks = None
+    else:
+        masks = torch.stack([b.mask for b in batch if b.mask is not None], dim=0)
+    meta: Dict[str, List[str]] = {}
+    for k in batch[0].meta.keys():
+        meta[k] = [b.meta.get(k, "") for b in batch]
+    return {"weak": weak, "strong": strong, "mask": masks, "meta": meta}
+
 
 class ResizeAndNormalize:
     def __init__(
