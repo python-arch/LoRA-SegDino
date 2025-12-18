@@ -11,13 +11,17 @@ import torch
 from torch.utils.data import DataLoader
 
 from segdino.corruption_transform import CorruptionTransform
-from segdino.corruptions import CorruptionSpec
+from segdino.corruptions import CorruptionSpec, MixedCorruptionSpec
 from segdino.data import ManifestSegmentationDataset, ResizeAndNormalize
 from segdino.metrics import RunningStats, boundary_fscore, dice_iou_binary, hd95_binary
 
 
 def load_ckpt_flex(model: torch.nn.Module, ckpt_path: str, map_location: str) -> None:
-    obj = torch.load(ckpt_path, map_location=map_location)
+    # Prefer `weights_only=True` when supported to avoid unpickling arbitrary objects.
+    try:
+        obj = torch.load(ckpt_path, map_location=map_location, weights_only=True)
+    except TypeError:
+        obj = torch.load(ckpt_path, map_location=map_location)
     if isinstance(obj, dict) and "state_dict" in obj:
         state = obj["state_dict"]
     else:
@@ -90,21 +94,11 @@ def main() -> None:
     parser.add_argument("--dice_thr", type=float, default=0.5)
     parser.add_argument("--boundary_tol_px", type=int, default=2)
 
-    parser.add_argument(
-    "--family",
-    type=str,
-    default="blur",
-    choices=["blur", "noise", "jpeg", "illumination", "mixed"]
-    )
+    parser.add_argument("--family", type=str, default="blur", choices=["blur", "noise", "jpeg", "illumination", "mixed"])
 
-    parser.add_argument(
-        "--num_ops",
-        type=int,
-        default=2,
-        help="Number of ops for mixed corruption"
-    )
+    parser.add_argument("--num_ops", type=int, default=2, help="Number of ops for mixed corruption (1..4).")
 
-    parser.add_argument("--max_severity", type=int, default=8)
+    parser.add_argument("--max_severity", type=int, default=4, help="Max severity (inclusive). Supports 0..8.")
     parser.add_argument("--corruption_id", type=str, default="v1")
 
     parser.add_argument("--ckpt", type=str, required=True, help="Trained segmentation checkpoint (.pth).")
@@ -138,8 +132,6 @@ def main() -> None:
 
     rows: List[Dict[str, object]] = []
     for s in range(0, args.max_severity + 1):
-        from segdino.corruptions import MixedCorruptionSpec
-
         if args.family == "mixed":
             spec = MixedCorruptionSpec(
                 severity=s,
@@ -216,4 +208,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

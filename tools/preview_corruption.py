@@ -14,9 +14,9 @@ def main() -> None:
     parser.add_argument("--image", type=str, required=True)
     parser.add_argument("--out", type=str, required=True)
     parser.add_argument("--family", type=str, default="blur", choices=["none", "blur", "noise", "jpeg", "illumination", "mixed"])
-    parser.add_argument("--severity", type=int, default=3, choices=[0, 1, 2, 3, 4])
+    parser.add_argument("--severity", type=int, default=3, help="Severity (supports 0..8).")
     parser.add_argument("--corruption_id", type=str, default="default")
-    parser.add_argument("--num_ops", type=int, default=2, choices=[1, 2], help="For mixed only.")
+    parser.add_argument("--num_ops", type=int, default=2, help="For mixed only (1..4).")
     args = parser.parse_args()
 
     img_path = Path(args.image)
@@ -40,4 +40,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

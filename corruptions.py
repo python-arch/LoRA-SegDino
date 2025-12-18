@@ -68,8 +68,8 @@ class MixedCorruptionSpec:
     def validate(self) -> None:
         if not (0 <= self.severity <= 8):
             raise ValueError("severity must be in [0,8]")
-        if self.num_ops not in (1, 2,3,4):
-            raise ValueError("num_ops must be 1 or 4")
+        if not (1 <= self.num_ops <= len(self.families)):
+            raise ValueError(f"num_ops must be in [1, {len(self.families)}]")
         bad = [f for f in self.families if f not in {"blur", "noise", "jpeg", "illumination"}]
         if bad:
             raise ValueError(f"Invalid families: {bad}")
@@ -103,8 +103,17 @@ def _jpeg_compress(img_pil: Image.Image, quality: int) -> Image.Image:
 def _apply_blur(img_pil: Image.Image, severity: int) -> Image.Image:
     if severity <= 0:
         return img_pil
-    sigma_map = {1: 0.7, 2: 1.2, 3: 2.0, 4: 3.0}
-    sigma = sigma_map.get(severity, 2.0)
+    sigma_map = {
+        1: 0.7,
+        2: 1.2,
+        3: 2.0,
+        4: 3.0,
+        5: 4.0,
+        6: 5.5,
+        7: 7.0,
+        8: 9.0,
+    }
+    sigma = sigma_map.get(severity, 3.0)
     return img_pil.filter(ImageFilter.GaussianBlur(radius=float(sigma)))
 
 
@@ -112,8 +121,17 @@ def _apply_noise(img_pil: Image.Image, severity: int, rng: random.Random) -> Ima
     if severity <= 0:
         return img_pil
     _require_numpy()
-    std_map = {1: 5.0, 2: 10.0, 3: 20.0, 4: 35.0}
-    std = std_map.get(severity, 20.0)
+    std_map = {
+        1: 5.0,
+        2: 10.0,
+        3: 20.0,
+        4: 35.0,
+        5: 50.0,
+        6: 70.0,
+        7: 90.0,
+        8: 120.0,
+    }
+    std = std_map.get(severity, 35.0)
     arr = np.asarray(img_pil.convert("RGB")).astype("float32")
     # deterministic noise seeded via rng -> 32-bit seed for NumPy
     rs = np.random.RandomState(rng.getrandbits(32))
@@ -125,8 +143,17 @@ def _apply_noise(img_pil: Image.Image, severity: int, rng: random.Random) -> Ima
 def _apply_jpeg(img_pil: Image.Image, severity: int) -> Image.Image:
     if severity <= 0:
         return img_pil
-    q_map = {1: 80, 2: 60, 3: 35, 4: 15}
-    quality = q_map.get(severity, 35)
+    q_map = {
+        1: 80,
+        2: 60,
+        3: 35,
+        4: 15,
+        5: 10,
+        6: 7,
+        7: 5,
+        8: 3,
+    }
+    quality = q_map.get(severity, 15)
     return _jpeg_compress(img_pil, quality=quality)
 
 
@@ -146,6 +173,8 @@ def _apply_illumination(img_pil: Image.Image, severity: int, rng: random.Random)
     b = rng.uniform(1.0 - d_b, 1.0 + d_b)
     c = rng.uniform(1.0 - d_c, 1.0 + d_c)
     g = rng.uniform(1.0 - d_g, 1.0 + d_g)
+    b = max(0.1, min(2.0, b))
+    c = max(0.1, min(2.0, c))
     g = max(0.2, min(2.5, g))
 
     out = ImageEnhance.Brightness(img_pil).enhance(float(b))
@@ -217,4 +246,3 @@ def apply_mixed_corruption_bgr(
             spec=CorruptionSpec(family=fam, severity=spec.severity, corruption_id=spec.corruption_id),
         )
     return out
-
