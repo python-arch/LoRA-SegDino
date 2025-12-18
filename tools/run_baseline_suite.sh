@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 # Run a baseline adaptation suite (source-free) on a chosen corruption regime.
 #
@@ -89,7 +89,7 @@ for METHOD in "${METHODS[@]}"; do
   echo "[RUN] method=${METHOD} corruption=${CORRUPTION} severity=${SEVERITY} num_ops=${NUM_OPS}"
   echo "============================================================"
 
-  python -m segdino.tools.adapt_baselines \
+  if python -m segdino.tools.adapt_baselines \
     --dataset_root "${DATASET_ROOT}" \
     --adapt_manifest "${ADAPT_MANIFEST}" \
     --eval_manifest "${EVAL_MANIFEST}" \
@@ -115,7 +115,11 @@ for METHOD in "${METHODS[@]}"; do
     --dino_size "${DINO_SIZE}" \
     --repo_dir "${REPO_DIR}" \
     --out_csv "${OUT_CSV}"
+  then
+    echo "[OK] method=${METHOD}"
+  else
+    echo "[FAIL] method=${METHOD} (continuing)" >&2
+  fi
 done
 
 echo "[OK] Baseline suite complete: ${OUT_CSV}"
-

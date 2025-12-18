@@ -43,22 +43,32 @@ def load_ckpt_flex(model: nn.Module, ckpt_path: str, map_location: str) -> None:
 
 
 def select_tent_params(model: nn.Module) -> List[nn.Parameter]:
-    params: List[nn.Parameter] = []
-    for m in model.modules():
-        if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.LayerNorm, nn.GroupNorm)):
-            if hasattr(m, "weight") and isinstance(m.weight, torch.Tensor):
-                m.weight.requires_grad_(True)
-                params.append(m.weight)
-            if hasattr(m, "bias") and isinstance(m.bias, torch.Tensor):
-                m.bias.requires_grad_(True)
-                params.append(m.bias)
-        else:
-            for p in m.parameters(recurse=False):
-                p.requires_grad_(False)
-    # also freeze any parameters not included above
+    # Freeze everything first, then selectively enable norm affine params.
     for p in model.parameters():
-        if p not in params:
-            p.requires_grad_(False)
+        p.requires_grad_(False)
+
+    params: List[nn.Parameter] = []
+    seen: set[int] = set()
+
+    for m in model.modules():
+        if not isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.LayerNorm, nn.GroupNorm)):
+            continue
+
+        w = getattr(m, "weight", None)
+        b = getattr(m, "bias", None)
+
+        if isinstance(w, torch.Tensor) and w.requires_grad is False:
+            w.requires_grad_(True)
+            if id(w) not in seen:
+                params.append(w)
+                seen.add(id(w))
+
+        if isinstance(b, torch.Tensor) and b.requires_grad is False:
+            b.requires_grad_(True)
+            if id(b) not in seen:
+                params.append(b)
+                seen.add(id(b))
+
     return params
 
 
