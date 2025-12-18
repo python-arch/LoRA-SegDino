@@ -50,8 +50,8 @@ class CorruptionSpec:
     def validate(self) -> None:
         if self.family not in {"none", "blur", "noise", "jpeg", "illumination"}:
             raise ValueError(f"Unknown corruption family: {self.family}")
-        if not (0 <= self.severity <= 4):
-            raise ValueError("severity must be in [0,4]")
+        if not (0 <= self.severity <= 8):
+            raise ValueError("severity must be in [0,8]")
 
 
 @dataclass(frozen=True)
@@ -66,10 +66,10 @@ class MixedCorruptionSpec:
     corruption_id: str = "mixed_v1"
 
     def validate(self) -> None:
-        if not (0 <= self.severity <= 4):
-            raise ValueError("severity must be in [0,4]")
-        if self.num_ops not in (1, 2):
-            raise ValueError("num_ops must be 1 or 2")
+        if not (0 <= self.severity <= 8):
+            raise ValueError("severity must be in [0,8]")
+        if self.num_ops not in (1, 2,3,4):
+            raise ValueError("num_ops must be 1 or 4")
         bad = [f for f in self.families if f not in {"blur", "noise", "jpeg", "illumination"}]
         if bad:
             raise ValueError(f"Invalid families: {bad}")

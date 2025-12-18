@@ -83,15 +83,28 @@ def main() -> None:
     parser.add_argument("--manifest", type=str, default="./splits/kvasir_target_holdout.txt")
     parser.add_argument("--img_dir_name", type=str, default="images")
     parser.add_argument("--mask_dir_name", type=str, default="masks")
-    parser.add_argument("--input_h", type=int, default=352)
-    parser.add_argument("--input_w", type=int, default=352)
+    parser.add_argument("--input_h", type=int, default=256)
+    parser.add_argument("--input_w", type=int, default=256)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--dice_thr", type=float, default=0.5)
     parser.add_argument("--boundary_tol_px", type=int, default=2)
 
-    parser.add_argument("--family", type=str, default="blur", choices=["blur", "noise", "jpeg", "illumination"])
-    parser.add_argument("--max_severity", type=int, default=4, choices=[0, 1, 2, 3, 4])
+    parser.add_argument(
+    "--family",
+    type=str,
+    default="blur",
+    choices=["blur", "noise", "jpeg", "illumination", "mixed"]
+    )
+
+    parser.add_argument(
+        "--num_ops",
+        type=int,
+        default=2,
+        help="Number of ops for mixed corruption"
+    )
+
+    parser.add_argument("--max_severity", type=int, default=8)
     parser.add_argument("--corruption_id", type=str, default="v1")
 
     parser.add_argument("--ckpt", type=str, required=True, help="Trained segmentation checkpoint (.pth).")
@@ -125,8 +138,23 @@ def main() -> None:
 
     rows: List[Dict[str, object]] = []
     for s in range(0, args.max_severity + 1):
-        spec = CorruptionSpec(family=args.family, severity=s, corruption_id=args.corruption_id)
+        from segdino.corruptions import MixedCorruptionSpec
+
+        if args.family == "mixed":
+            spec = MixedCorruptionSpec(
+                severity=s,
+                num_ops=args.num_ops,
+                corruption_id=args.corruption_id,
+            )
+        else:
+            spec = CorruptionSpec(
+                family=args.family,
+                severity=s,
+                corruption_id=args.corruption_id,
+            )
+
         pre = CorruptionTransform(spec=spec)
+
 
         ds = ManifestSegmentationDataset(
             dataset_root=args.dataset_root,
