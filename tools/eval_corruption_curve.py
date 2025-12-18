@@ -48,6 +48,11 @@ def eval_one(
         else:
             inputs = batch.image
             targets = batch.mask
+        
+        if inputs.ndim == 3:
+            inputs = inputs.unsqueeze(0)
+        if targets is not None and targets.ndim == 3:
+            targets = targets.unsqueeze(0)
 
         inputs = inputs.to(device)
         if targets is None:
@@ -107,7 +112,7 @@ def main() -> None:
         backbone = torch.hub.load(args.repo_dir, "dinov3_vits16", source="local", weights=args.dino_ckpt)
         encoder_size = "small"
 
-    from dpt import DPT
+    from segdino.dpt import DPT
 
     model = DPT(encoder_size=encoder_size, nclass=1, backbone=backbone)
     model = model.to(device)
@@ -134,6 +139,11 @@ def main() -> None:
             image_pre_transform=pre,
             strict_pair=True,
         )
+        def collate_one(batch):
+            #TODO : need to adjust for bat size>1
+            # batch is a list of SegSample; for batch_size=1 return the item directly 
+            return batch[0] if len(batch) == 1 else batch
+
         loader = DataLoader(
             ds,
             batch_size=args.batch_size,
@@ -141,7 +151,9 @@ def main() -> None:
             num_workers=args.num_workers,
             pin_memory=(device == "cuda"),
             drop_last=False,
+            collate_fn=collate_one,
         )
+
 
         m = eval_one(model, loader, device=device, dice_thr=args.dice_thr, boundary_tol_px=args.boundary_tol_px)
         row = {

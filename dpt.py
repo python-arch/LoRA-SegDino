@@ -2,7 +2,7 @@ import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from blocks import _make_scratch
+from segdino.blocks import _make_scratch
 
 class DPTHead(nn.Module):
     def __init__(
