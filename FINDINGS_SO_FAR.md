@@ -153,6 +153,28 @@ Interpretation:
   - boundary metrics (BF, HD95) **and**
   - maintain low failure rates (no collapse).
 
+## Symbolic alignment stability ablations (teacher KL dependence)
+We tested whether learned symbolic alignment can replace the frozen-teacher KL stabilizer.
+
+### Observation 1: removing teacher KL collapses
+Setting `--teacher_kl_weight 0.0` (even with symbolic enabled) collapses to the trivial binary-segmentation optimum:
+- all-background predictions (`empty_rate=1.0`),
+- Dice≈0, HD95=inf.
+
+### Reasoning
+This is expected: entropy minimization/TENT for binary segmentation has a degenerate minimum where all logits push to background.
+The teacher KL term is not just “a regularizer”; it is currently a **necessary anti-collapse constraint** in the severe regime.
+
+### Observation 2: simple foreground-fraction prior was insufficient (current implementation)
+We attempted an additional stabilizer that matches the mean foreground probability of student to teacher (`fg_prior_weight`), but the run still collapsed under `teacher_kl_weight=0.0`.
+
+### Implication / next fix direction
+To decouple from teacher KL (if desired), we likely need one of:
+- a stronger/structured stabilizer (e.g., spatial prior, boundary-aware constraint, or per-image foreground mass constraint),
+- or a schedule: keep KL early to prevent collapse, then anneal it to allow symbolic losses to shape the solution.
+
+For professor feedback: this is a concrete “failure mode + hypothesis” we can discuss.
+
 ## Known limitations of current evidence
 - Holdout is 40 images (fine for iteration but still somewhat noisy); we should run 3 seeds later.
 - We haven’t yet produced the per-image pseudo-label confidence/entropy plots that justify “pseudo-labels are poor” in a figure; that’s the next diagnostic.
