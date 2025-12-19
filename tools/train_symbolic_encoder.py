@@ -11,9 +11,9 @@ from typing import Dict
 import torch
 from torch.utils.data import DataLoader
 
-from symalign.augment import MaskAugmentConfig, augment_mask_pair
-from symalign.encoder import SmallMaskEncoder, nt_xent
-from symalign.masks import MaskPairDataset
+from segdino.symalign.augment import MaskAugmentConfig, augment_mask_pair
+from segdino.symalign.encoder import SmallMaskEncoder, nt_xent
+from segdino.symalign.masks import MaskPairDataset
 
 
 def main() -> None:
