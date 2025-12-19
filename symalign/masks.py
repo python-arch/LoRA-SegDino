@@ -53,9 +53,15 @@ class MaskPairDataset(Dataset):
     Augmentations are applied in the training script to generate two views.
     """
 
-    def __init__(self, mask_dir: str | Path, boundary_width: int = 2) -> None:
+    def __init__(
+        self,
+        mask_dir: str | Path,
+        boundary_width: int = 2,
+        out_size: Tuple[int, int] = (256, 256),
+    ) -> None:
         self.mask_dir = Path(mask_dir)
         self.boundary_width = int(boundary_width)
+        self.out_size = (int(out_size[0]), int(out_size[1]))  # (H,W)
         self.paths = list_mask_files(self.mask_dir)
 
     def __len__(self) -> int:
@@ -65,6 +71,15 @@ class MaskPairDataset(Dataset):
         p = self.paths[idx]
         m01 = read_mask01(p)
         b01 = boundary_band(m01, width=self.boundary_width)
-        x = np.stack([m01, b01], axis=0)  # (2,H,W)
+        x = np.stack([m01, b01], axis=0).astype(np.float32)  # (2,H,W)
+
+        # Resize to a fixed size so DataLoader can stack batches.
+        out_h, out_w = self.out_size
+        if x.shape[1] != out_h or x.shape[2] != out_w:
+            x_resized = np.zeros((2, out_h, out_w), dtype=np.float32)
+            x_resized[0] = cv2.resize(x[0], (out_w, out_h), interpolation=cv2.INTER_NEAREST)
+            x_resized[1] = cv2.resize(x[1], (out_w, out_h), interpolation=cv2.INTER_NEAREST)
+            x = x_resized
+
         xt = torch.from_numpy(x).float()
         return xt, p.stem
