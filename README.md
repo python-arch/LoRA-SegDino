@@ -8,6 +8,7 @@ Key docs (kept up-to-date as the project evolves):
 - `EXPERIMENT_PLAN.md` (problem definition + reviewer-proof protocol)
 - `IMPLEMENTATION_PLAN.md` (staged implementation plan + status tracking)
 - `FINDINGS_SO_FAR.md` (running lab notebook: results + reasoning)
+- `project_journal/` (versioned snapshots + prioritized pivot plans for sharing/feedback)
 
 ## Environment Setup
 ```bash
@@ -191,6 +192,56 @@ python tools/adapt_baselines.py \
   --out_csv ./runs/adapt_symbolic_none_mixed_ops4_S4.csv
 ```
 
+## Direction-4 Pivot: Multi-Modal Symbolic Descriptors (mask + image)
+Train a multi-modal symbolic encoder that fuses mask structure + masked-image appearance:
+```bash
+python tools/train_multimodal_encoder.py \
+  --dataset_root ./segdata/kvasir \
+  --mask_encoder_ckpt ./runs/symalign_encoder_kvasir/encoder_final.pth \
+  --out_dir ./runs/symalign_multimodal_encoder_kvasir \
+  --epochs 20 \
+  --batch_size 32 \
+  --lr 1e-4 \
+  --num_workers 4 \
+  --out_h 256 \
+  --out_w 256 \
+  --boundary_width 2 \
+  --embed_dim 64 \
+  --image_width 32 \
+  --fusion mlp
+```
+
+Use it during adaptation:
+```bash
+python tools/adapt_baselines.py \
+  --dataset_root ./segdata/kvasir \
+  --adapt_manifest ./splits/kvasir_target_adapt.txt \
+  --eval_manifest ./splits/kvasir_target_holdout.txt \
+  --corruption mixed \
+  --severity 4 \
+  --num_ops 4 \
+  --corruption_id v1 \
+  --method tent \
+  --steps 500 \
+  --batch_size 4 \
+  --lr 1e-4 \
+  --num_workers 4 \
+  --teacher_kl_weight 1.0 \
+  --adapter none \
+  --use_symbolic \
+  --symbolic_mode multimodal \
+  --multimodal_ckpt ./runs/symalign_multimodal_encoder_kvasir/encoder_final.pth \
+  --multimodal_output fused \
+  --symbolic_lambda 0.1 \
+  --symbolic_warmup_steps 150 \
+  --symbolic_ema_momentum 0.99 \
+  --symbolic_conf_thr 0.8 \
+  --ckpt <seg_checkpoint.pth> \
+  --dino_ckpt <dinov3_weights.pth> \
+  --repo_dir <dinov3_repo_dir> \
+  --out_csv ./runs/adapt_symbolic_multimodal_none_mixed_ops4_S4.csv
+```
+
 ## Current findings (high-level)
 See `FINDINGS_SO_FAR.md` for full results and reasoning. Key points so far:
 - Single-family blur/JPEG/illumination at `S0..S4` are not severe enough; **mixed corruptions** (especially `num_ops=4`) produce a strong stress regime.
@@ -220,3 +271,11 @@ All numbers below are for `mixed` corruptions with `corruption_id=v1`, adaptatio
   - `mixed ops4 S4` + LoRA: Dice=0.7317, IoU=0.6113, BoundaryF=0.2285, HD95=47.30
   - `mixed ops4 S4` + SALT: Dice=0.7349, IoU=0.6145, BoundaryF=0.2270, HD95=47.03
 - Failure mode ablation: setting `--teacher_kl_weight 0.0` causes all-background collapse (empty_rate=1.0), even with symbolic enabled.
+
+### Current blocker (important for feedback)
+- Under the stress regime (`mixed ops4 S4`), removing the frozen-teacher stabilizer (`--teacher_kl_weight 0.0`) collapses to all-background, even with symbolic alignment enabled.
+- Current interpretation: symbolic alignment is contributing a **structure/boundary preservation signal**, but it does **not yet** serve as a standalone anti-collapse mechanism.
+
+### Next experiments (small, high-signal)
+- **Teacher KL annealing:** start with KL>0 early, decay it toward 0 late; test whether symbolic loss can “take over” without collapse.
+- **No-teacher constraints:** explicit anti-collapse penalties (foreground-mass bounds, smoothness/TV, fragmentation proxies), evaluated under `mixed ops4 S4`.

@@ -7,8 +7,12 @@ We study **source-free, unlabeled target adaptation** for polyp segmentation (Kv
 - **Target adaptation:** uses **only unlabeled target images** (no source images, no source labels, no source statistics).
 - **Evaluation:** uses a **held-out labeled target set** never used for adaptation/tuning.
 
-### Core capability claim
-Enable **stable** source-free adaptation under **severe appearance shift** where standard pseudo-label self-training is unreliable, by aligning **learned mask-structure descriptors** during PEFT adaptation (LoRA/SALT and other adapters).
+### Core capability claim (refined)
+Enable **source-free target adaptation** under **severe appearance shift** where pseudo-label self-training is unreliable, and **preserve mask structure/boundaries** during adaptation by aligning **learned mask-structure descriptors** during PEFT adaptation (LoRA/SALT and other adapters).
+
+Important nuance (based on current findings):
+- The current source-free baselines require an explicit anti-collapse stabilizer (teacher KL / constraints) under severe shift; learned symbolic alignment **does not yet replace** that stabilizer by itself.
+  - Current positioning for feedback: symbolic alignment is a **structure/boundary preservation signal** that complements standard anti-collapse stabilizers; replacing the stabilizer is an explicit research question (see “Teacher dependence” experiments).
 
 ## Experimental Protocol (Reviewer-Proof)
 ### Data contract (standardized)
@@ -72,12 +76,18 @@ Primary comparisons:
 Secondary (optional): other PEFTs (e.g., IA³/adapters/BitFit) as long as parameter budgets are matched.
 
 ### Symbolically-aligned reparameterization (SALT-like variants)
-In addition to comparing existing PEFT methods (LoRA/SALT), we will test **symbolically-aligned SALT-like variants** as ablations to understand how reparameterization interacts with symbolic alignment:
+We keep LoRA and SALT as the **primary PEFT axis** for the first milestone (clean, budget-matched, reviewer-expected).
+
+**Phase-2 / optional (after the core symbolic method shows clear gains):** test SALT-like “symbolically aligned reparameterizations” as ablations to understand how update-space design interacts with symbolic alignment:
 - **SALT-G (symbolic-gradient gated subspace):** use symbolic-loss signals to decide which layers/components update (others frozen).
 - **SALT-S/A (structure vs appearance spectrum split):** partition the singular spectrum into “structure” vs “appearance” components and couple them to different losses (e.g., `L_sym` vs `L_core`).
 - **SALT-Dial (domain dial):** learn a small set of per-layer scalars that modulate adaptation strength; symbolic loss supervises the dial to avoid over-adaptation.
 
-These are treated as **ablation variants** of the reparameterized update space (not new datasets or new supervision).
+These are treated strictly as **ablation variants** of the reparameterized update space (not new datasets or new supervision), and should be de-scoped if they distract from the main claim.
+
+**Scope note (phase-1 vs phase-2):**
+- Phase-1: validate learned-symbolic alignment + PEFT plug-and-play (LoRA/SALT) with strong baselines.
+- Phase-2: implement and compare SALT-G / SALT-S/A / SALT-Dial (keep as ablations / follow-up unless a clear winner emerges).
 
 ## Symbolic Alignment (what “symbolic” means)
 We replace hand-crafted shape/topology statistics with a **learned mask-structure descriptor encoder** `E_θ`.
@@ -133,6 +143,12 @@ Reparameterization ablations (SALT family):
 
 Run ablations at least on `S2` and `S4`, plus include in AUSC if feasible.
 
+## Stability Ablations (teacher dependence)
+Given the known degeneracy of entropy-based adaptation in binary segmentation, include explicit stability ablations:
+- `teacher_kl_weight > 0` vs `teacher_kl_weight = 0` (expected collapse under severe shift)
+- KL annealing schedule (start >0 then decay toward 0) to test if symbolic alignment can take over late in adaptation
+- Explicit collapse penalties/constraints (foreground mass bounds, fragmentation proxies) vs none
+
 ## Parameter/Compute Budgets (claims)
 Report trainable parameters and time.
 
@@ -149,6 +165,9 @@ Primary:
 Boundary:
 - **Boundary F-score** (primary for endoscopy-style segmentation)
 - **HD95** (secondary; framed as robust boundary error under shift)
+
+Interpretation note:
+- We expect a Dice–boundary trade-off for some baselines (e.g., TENT can improve Dice while hurting boundaries); part of the goal is to **preserve boundaries/structure** without sacrificing Dice.
 
 Stability / failure:
 - Empty prediction rate, full prediction rate
@@ -217,11 +236,33 @@ Phase 5: ablations + budget curves
 8. Causality ablations on `S2` and `S4`
 9. Budget curves at `S4` + AUSC for LoRA vs SALT (0.1/0.5/1%)
 
-Phase 6: symbolic-aligned reparameterization ablations (SALT variants)
+Phase 6 (optional): symbolic-aligned reparameterization ablations (SALT variants)
 10. Compare SALT baseline vs SALT-G vs SALT-S/A vs SALT-Dial on:
    - moderate regime: `mixed ops2 S4`
    - stress regime: `mixed ops4 S4`
    - (optional) severity ladder aggregation (AUSC) on `mixed ops4 S2–S4`
+
+## Teacher dependence experiments (explicit, due to observed collapse)
+Current evidence: setting `--teacher_kl_weight 0.0` collapses to all-background under the stress regime (`mixed ops4 S4`), even with symbolic alignment enabled. This is a central discussion point for professor/reviewer feedback.
+
+We therefore plan the following targeted experiments (small, high-signal) before expanding scope:
+1. **KL annealing schedule:** start with teacher KL > 0 to prevent collapse, then decay to 0 so symbolic loss “takes over” late.
+2. **Explicit anti-collapse constraints (no teacher):** replace teacher KL with constraints that directly penalize degenerate solutions (foreground-mass bounds, TV/boundary smoothness, fragmentation proxy bounds).
+3. **Symbols-only vs safeguards-only vs full:** demonstrate causal separation between “symbolic structure signal” and “anti-collapse engineering”.
+
+Success criteria (for the “replace teacher” goal): stable non-degenerate predictions (empty/full rates near 0) and competitive Dice/BoundaryF without teacher KL in the stress regime.
+
+## Research inspirations (optional extensions)
+If reviewers/professors push for stronger novelty, the following directions are compatible with this pipeline:
+- **Stratified contrastive symbolic learning:** stratify masks by size/complexity during `E_θ` training to avoid the descriptor collapsing to trivial “area only”.
+- **Multi-modal symbolic descriptors (image+mask):** fuse mask-structure descriptors with appearance descriptors from the image (e.g., masked pooling of backbone features).
+- **Topological descriptors:** topology-aware descriptors (e.g., persistent homology style summaries) to penalize fragmentation/holes in a principled way (higher complexity; phase-2).
+- **Equivariant symbolic descriptors:** rotation/scale equivariant encoders to reduce augmentation reliance (higher complexity; phase-2).
+
+## Plan history (for feedback / reproducibility)
+We keep a versioned “journal” with snapshots and pivot plans:
+- Snapshot of current baselines/PEFT/symbolic status: `project_journal/snapshots/2025-12-19_baselines_peft_symbolic.md`
+- Current prioritized pivot plan (Direction 4, multi-modal): `project_journal/plans/2025-12-19_direction4_multimodal_symbolic_alignment.md`
 
 Appendix: mixed corruptions; optional “domain dial” (scale adapter strength at inference).
 

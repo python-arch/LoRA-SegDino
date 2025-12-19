@@ -8,13 +8,17 @@ This document breaks the experimental protocol in `EXPERIMENT_PLAN.md` into conc
 - **Pluggable axes:** PEFT adapter type and loss components (core/symbolic/safeguards) are modular and switchable.
 - **Minimal intrusion:** keep existing scripts working where possible; add new modules gradually.
 
-## Proposed repo structure (incremental)
-We keep top-level entry scripts, but factor reusable components into a small package:
-- `segdino/` (new): datasets, corruptions, adapters, symbolic encoder, losses, metrics, runners
-- `scripts/` (optional later): thin wrappers / CLI entrypoints
-- `segdata/` (external, not committed): datasets and generated corruptions
-- `splits/` (new, committed): filelists and split metadata
-- `configs/` (new, committed): experiment configs and sweep templates
+## Repo structure (locked constraint)
+We keep the current project layout stable to avoid breaking paths on the machine/cluster.
+
+Important constraint (user request): **do not migrate code into a new `segdino/` package**; if we add a package for symbolic alignment / descriptor learning it should live under a separate name (currently: `symalign/`).
+
+Current structure used by the pipeline:
+- Top-level modules (model, adapters, data, corruptions, metrics).
+- `tools/`: runnable CLIs (splits, corruption evaluation, adaptation baselines, symbolic encoder training).
+- `symalign/`: learned symbolic descriptor encoder + symbolic alignment utilities (kept separate from `segdino`).
+- `splits/`: committed target manifest files.
+- `segdata/`: dataset root (external, not committed).
 
 ## Current repo mapping → staged refactor (keep scripts working)
 This repo currently uses top-level scripts and utilities:
@@ -26,11 +30,12 @@ This repo currently uses top-level scripts and utilities:
 
 ### Migration strategy (no breakage)
 We will not “big bang” rewrite. Instead:
-1. Introduce a new internal package (`segdino/`) containing reusable components.
-2. Keep existing entrypoints working by:
+1. Keep existing entrypoints working by:
    - leaving their CLI intact where possible
-   - gradually replacing internal logic with imports from `segdino/`
-3. Add **new** entrypoints only when needed (e.g., `train_symbolic_encoder.py`, `adapt.py`) so the baseline scripts remain usable.
+   - gradually replacing duplicated internal logic with shared imports (top-level modules and `symalign/` where applicable)
+2. Add **new** entrypoints only when needed (e.g., `tools/train_symbolic_encoder.py`, `tools/adapt_baselines.py`) so the baseline scripts remain usable.
+
+Note: `segdino/` exists in this repo (legacy/utilities), but the current plan is to **avoid expanding it**; new symbolic work stays in `symalign/` and new CLIs stay under `tools/`.
 
 ### What gets moved/duplicated first vs later
 Early stages (unblock experiments):
@@ -306,6 +311,23 @@ This section is a living checklist to keep the plan synchronized with what is ac
 - Stage 6 (baseline evaluation utilities)
   - Corruption curve evaluator: `tools/eval_corruption_curve.py` (includes mixed support)
 
+### Completed (PEFT axis)
+- Pluggable PEFT injection (LoRA/SALT) for adaptation runs
+  - Core implementation: `adapters.py`
+  - CLI integration: `tools/adapt_baselines.py` via `--adapter {none,lora,salt}`
+  - Compatibility fixes included:
+    - device/dtype placement (avoid CPU/GPU mismatch)
+    - wrapper attributes expected by DINOv3 attention (e.g., `in_features`)
+
+### Completed (learned symbolic descriptors)
+- Learned symbolic descriptor encoder `E_θ`
+  - Package: `symalign/` (kept separate from `segdino/`)
+  - Training CLI: `tools/train_symbolic_encoder.py`
+  - Output checkpoint: `runs/symalign_encoder_kvasir/encoder_final.pth`
+- Symbolic alignment integrated into adaptation
+  - CLI integration: `tools/adapt_baselines.py` via `--use_symbolic` and `--symbolic_*` flags
+  - Uses target-only EMA priors with confidence gating and warmup
+
 ### Newly added for “Step 1/2” execution
 - Step 1 (pseudo-label quality diagnostics)
   - Tool: `tools/pseudolabel_quality.py`
@@ -318,6 +340,9 @@ This section is a living checklist to keep the plan synchronized with what is ac
   - Convenience runner: `tools/run_baseline_suite.sh` (runs all 4 methods into one CSV)
 
 ### In progress / next
+- Teacher-dependence experiments
+  - Add a `--teacher_kl_schedule` option (or equivalent) to test KL annealing without changing the protocol.
+  - Add explicit anti-collapse constraints (foreground-mass bounds / smoothness / fragmentation proxies) to test “no teacher” regimes.
 - Stage 5 (pluggable PEFT adapter framework + budget matching)
   - Implement adapter registry + LoRA/SALT knobs in a shared module (avoid duplicating logic between scripts/tools).
 - Stage 5b (symbolically-aligned SALT-like variants)

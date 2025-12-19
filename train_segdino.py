@@ -199,7 +199,10 @@ def main():
     else:
         backbone = torch.hub.load(args.repo_dir, 'dinov3_vits16', source='local', weights=args.dino_ckpt)
 
-    from segdino.dpt import DPT
+    try:
+        from segdino.dpt import DPT
+    except ModuleNotFoundError:
+        from dpt import DPT
     model = DPT(nclass=1, backbone=backbone)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
@@ -209,7 +212,10 @@ def main():
         lr=args.lr, weight_decay=args.weight_decay
     )
 
-    from segdino.dataset import FolderDataset, ResizeAndNormalize
+    try:
+        from segdino.dataset import FolderDataset, ResizeAndNormalize
+    except ModuleNotFoundError:
+        from dataset import FolderDataset, ResizeAndNormalize
     root = os.path.join(args.data_dir, args.dataset)
 
     train_transform = ResizeAndNormalize(size=(args.input_h, args.input_w))

@@ -175,14 +175,48 @@ To decouple from teacher KL (if desired), we likely need one of:
 
 For professor feedback: this is a concrete “failure mode + hypothesis” we can discuss.
 
+## “Useful numbers” snapshot (single seed, holdout n=40)
+All numbers below: corruption `mixed`, `corruption_id=v1`, adapt on `target_adapt`, eval on `target_holdout`.
+
+### Source-only (no adaptation)
+- Stress regime (`mixed ops4 S4`): Dice≈0.7188, IoU≈0.5989, BoundaryF≈0.2299, HD95≈50.31
+
+### Non-PEFT baselines (no symbolic, stabilized)
+- Moderate regime (`mixed ops2 S4`): `tent` Dice=0.8362, IoU=0.7420, BoundaryF=0.3785, HD95=26.15
+- Stress regime (`mixed ops4 S4`, clean baseline CSV): `tent` Dice=0.7372, IoU=0.6173, BoundaryF=0.2291, HD95=46.66
+- AUSC proxy (mean over `mixed ops4` severities `S2–S4`): `tent` mean Dice≈0.8010 (best among the four baselines)
+
+### PEFT-only baselines (no symbolic)
+- Stress regime (`mixed ops4 S4`, best objective = entropy):
+  - LoRA: Dice=0.7418, IoU=0.6202, BoundaryF=0.2375, HD95=47.72 (trainable≈0.92%)
+  - SALT: Dice=0.7396, IoU=0.6197, BoundaryF=0.2355, HD95=46.25 (trainable≈0.60%)
+- Moderate regime (`mixed ops2 S4`, best objective = entropy):
+  - LoRA: Dice=0.8381, IoU=0.7446, BoundaryF=0.3739, HD95=26.18
+  - SALT: Dice=0.8383, IoU=0.7442, BoundaryF=0.3788, HD95=26.08
+
+### Learned symbolic alignment (Eθ + EMA priors)
+- Tuned setting (no PEFT, `tent` core): `symbolic_lambda=0.1`, `warmup_steps=150`, `conf_thr=0.8`
+  - Stress regime (`mixed ops4 S4`): Dice=0.7376, IoU=0.6178, BoundaryF=0.2274, HD95=46.36
+- Plug-and-play check (same tuned symbolic settings, `tent` core):
+  - +LoRA: Dice=0.7317, IoU=0.6113, BoundaryF=0.2285, HD95=47.30
+  - +SALT: Dice=0.7349, IoU=0.6145, BoundaryF=0.2270, HD95=47.03
+
+### Teacher dependence (hard failure)
+- Stress regime (`mixed ops4 S4`): setting `--teacher_kl_weight 0.0` collapses to all-background (empty_rate=1.0), even with symbolic enabled.
+
 ## Known limitations of current evidence
 - Holdout is 40 images (fine for iteration but still somewhat noisy); we should run 3 seeds later.
-- We haven’t yet produced the per-image pseudo-label confidence/entropy plots that justify “pseudo-labels are poor” in a figure; that’s the next diagnostic.
+- Symbolic alignment currently matches (but does not exceed) the best baseline in the stress regime; we need to either:
+  - improve the symbolic signal (e.g., differentiable boundary view, loss calibration), and/or
+  - explicitly target the boundary tradeoff (BoundaryF/HD95), and/or
+  - revisit the stabilizer story (KL annealing vs explicit constraints).
 
-## Immediate next milestone
-Implement and evaluate **PEFT-only baselines** (LoRA/SALT), under matched trainable parameter budgets, using the same stabilized adaptation runner:
-- train adapters on `target_adapt` only
-- evaluate on `target_holdout`
-- compare vs strongest non-symbolic baseline (TENT) and vs source-only in both:
-  - moderate regime: `mixed ops2 S4`
-  - stress regime: `mixed ops4 S4`
+## Immediate next milestones (high-signal, low-scope-creep)
+1. **Teacher KL annealing experiment** on `mixed ops4 S4`:
+   - keep KL early to prevent collapse, decay toward 0 late, measure stability and metrics.
+2. **No-teacher explicit anti-collapse constraints** on `mixed ops4 S4`:
+   - foreground-mass bounds + smoothness/TV + fragmentation proxy (evaluate if any can replace teacher KL).
+3. **Symbolic tuning grid (small)** on `mixed ops4 S4`:
+   - `symbolic_lambda ∈ {0.03, 0.1, 0.3}`
+   - `conf_thr ∈ {0.8, 0.9}`
+   - `warmup_steps ∈ {100, 150, 200}`

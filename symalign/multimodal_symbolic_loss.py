@@ -3,19 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-import cv2
 import numpy as np
 import torch
-import torch.nn.functional as F
 
-try:
-    from segdino.symalign.encoder import SmallMaskEncoder
-    from segdino.symalign.masks import boundary_band
-    from segdino.symalign.prior import EMAStats, robust_huber
-except ModuleNotFoundError:
-    from symalign.encoder import SmallMaskEncoder
-    from symalign.masks import boundary_band
-    from symalign.prior import EMAStats, robust_huber
+from .masks import boundary_band
+from .multimodal_encoder import MultiModalSymbolicEncoder
+from .prior import EMAStats, robust_huber
 
 
 def boundary_from_prob(p: torch.Tensor, width: int = 2) -> torch.Tensor:
@@ -33,30 +26,34 @@ def boundary_from_prob(p: torch.Tensor, width: int = 2) -> torch.Tensor:
 
 
 @dataclass
-class SymbolicAlignment:
-    encoder: SmallMaskEncoder
+class MultiModalSymbolicAlignment:
+    encoder: MultiModalSymbolicEncoder
     ema_global: EMAStats
     ema_boundary: EMAStats
     boundary_width: int = 2
     huber_delta: float = 1.0
+    output: str = "fused"  # fused|mask|image
 
-    def compute_embeddings(self, p: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def compute_embeddings(self, image: torch.Tensor, p: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
+        image: (B,3,H,W)
         p: (B,1,H,W) probabilities
-        returns: (z_g, z_b) each (B,D)
+        returns: (z_g, z_b) each (B,D) for the selected output channel.
         """
         bnd = boundary_from_prob(p, width=self.boundary_width)
         x_g = torch.cat([p, bnd], dim=1)  # (B,2,H,W)
-        # boundary-only view: duplicate boundary band in both channels
-        x_b = torch.cat([bnd, bnd], dim=1)
-        z_g = self.encoder(x_g)
-        z_b = self.encoder(x_b)
-        return z_g, z_b
+        x_b = torch.cat([bnd, bnd], dim=1)  # boundary-only view
+
+        zf_g, zm_g, zi_g = self.encoder(image, x_g)
+        zf_b, zm_b, zi_b = self.encoder(image, x_b)
+
+        if self.output == "mask":
+            return zm_g, zm_b
+        if self.output == "image":
+            return zi_g, zi_b
+        return zf_g, zf_b
 
     def update_priors(self, z_g: torch.Tensor, z_b: torch.Tensor, mask: torch.Tensor) -> None:
-        """
-        Update EMA priors using only samples selected by mask (B,).
-        """
         if mask.numel() == 0:
             return
         if mask.dtype != torch.bool:

@@ -14,22 +14,45 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader
 
-from segdino.adapters import LoRASpec, SALTSpec, apply_peft_to_backbone, count_parameters
-from segdino.corruption_transform import CorruptionTransform
-from segdino.corruptions import CorruptionSpec, MixedCorruptionSpec
-from segdino.data import (
-    ManifestConsistencyDataset,
-    ManifestSegmentationDataset,
-    ResizeAndNormalize,
-    collate_seg_samples,
-    collate_seg_views_samples,
-)
-from segdino.metrics import RunningStats, boundary_fscore, dice_iou_binary, hd95_binary
-from segdino.views import WeakStrongViewTransform
+try:
+    from segdino.adapters import LoRASpec, SALTSpec, apply_peft_to_backbone, count_parameters
+    from segdino.corruption_transform import CorruptionTransform
+    from segdino.corruptions import CorruptionSpec, MixedCorruptionSpec
+    from segdino.data import (
+        ManifestConsistencyDataset,
+        ManifestSegmentationDataset,
+        ResizeAndNormalize,
+        collate_seg_samples,
+        collate_seg_views_samples,
+    )
+    from segdino.metrics import RunningStats, boundary_fscore, dice_iou_binary, hd95_binary
+    from segdino.views import WeakStrongViewTransform
+except ModuleNotFoundError:  # repo-root execution (no segdino package wrapper)
+    from adapters import LoRASpec, SALTSpec, apply_peft_to_backbone, count_parameters
+    from corruption_transform import CorruptionTransform
+    from corruptions import CorruptionSpec, MixedCorruptionSpec
+    from data import (
+        ManifestConsistencyDataset,
+        ManifestSegmentationDataset,
+        ResizeAndNormalize,
+        collate_seg_samples,
+        collate_seg_views_samples,
+    )
+    from metrics import RunningStats, boundary_fscore, dice_iou_binary, hd95_binary
+    from views import WeakStrongViewTransform
 
-from segdino.symalign.encoder import SmallMaskEncoder
-from segdino.symalign.prior import EMAStats
-from segdino.symalign.symbolic_loss import SymbolicAlignment
+try:
+    from segdino.symalign.encoder import SmallMaskEncoder
+    from segdino.symalign.prior import EMAStats
+    from segdino.symalign.symbolic_loss import SymbolicAlignment
+    from segdino.symalign.multimodal_encoder import MultiModalConfig, MultiModalSymbolicEncoder
+    from segdino.symalign.multimodal_symbolic_loss import MultiModalSymbolicAlignment
+except ModuleNotFoundError:  # repo-root execution
+    from symalign.encoder import SmallMaskEncoder
+    from symalign.prior import EMAStats
+    from symalign.symbolic_loss import SymbolicAlignment
+    from symalign.multimodal_encoder import MultiModalConfig, MultiModalSymbolicEncoder
+    from symalign.multimodal_symbolic_loss import MultiModalSymbolicAlignment
 
 
 def load_ckpt_flex(model: nn.Module, ckpt_path: str, map_location: str) -> None:
@@ -238,7 +261,22 @@ def main() -> None:
 
     # Symbolic alignment (learned E_theta + EMA priors)
     parser.add_argument("--use_symbolic", action="store_true", help="Enable learned-symbolic alignment loss.")
+    parser.add_argument(
+        "--symbolic_mode",
+        type=str,
+        default="mask",
+        choices=["mask", "multimodal"],
+        help="Symbolic descriptor backend: mask-only encoder (mask) or multi-modal encoder (multimodal).",
+    )
     parser.add_argument("--symbolic_ckpt", type=str, default=None, help="Path to trained E_theta checkpoint (.pth).")
+    parser.add_argument("--multimodal_ckpt", type=str, default=None, help="Path to trained multi-modal symbolic encoder checkpoint (.pth).")
+    parser.add_argument(
+        "--multimodal_output",
+        type=str,
+        default="fused",
+        choices=["fused", "mask", "image"],
+        help="Which multi-modal output to align in symbolic loss (ablation): fused|mask|image.",
+    )
     parser.add_argument("--symbolic_lambda", type=float, default=0.1)
     parser.add_argument("--symbolic_warmup_steps", type=int, default=100)
     parser.add_argument("--symbolic_ema_momentum", type=float, default=0.99)
@@ -261,7 +299,10 @@ def main() -> None:
         backbone = torch.hub.load(args.repo_dir, "dinov3_vits16", source="local", weights=args.dino_ckpt)
         encoder_size = "small"
 
-    from segdino.dpt import DPT
+    try:
+        from segdino.dpt import DPT
+    except ModuleNotFoundError:
+        from dpt import DPT
 
     model = DPT(encoder_size=encoder_size, nclass=1, backbone=backbone).to(device)
     load_ckpt_flex(model, args.ckpt, map_location=device)
@@ -360,40 +401,80 @@ def main() -> None:
 
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=args.weight_decay)
 
-    sym: SymbolicAlignment | None = None
+    sym_mask: SymbolicAlignment | None = None
+    sym_mm: MultiModalSymbolicAlignment | None = None
     if args.use_symbolic:
-        if not args.symbolic_ckpt:
-            raise ValueError("--use_symbolic requires --symbolic_ckpt")
-        # Prefer `weights_only=True` when supported to avoid unpickling arbitrary objects.
-        try:
-            obj = torch.load(args.symbolic_ckpt, map_location=device, weights_only=True)
-        except TypeError:
-            obj = torch.load(args.symbolic_ckpt, map_location=device)
-        if isinstance(obj, dict) and "state_dict" in obj:
-            state = obj["state_dict"]
-            enc_args = obj.get("args", {}) if isinstance(obj.get("args", {}), dict) else {}
+        if args.symbolic_mode == "mask":
+            if not args.symbolic_ckpt:
+                raise ValueError("--use_symbolic with --symbolic_mode mask requires --symbolic_ckpt")
+
+            try:
+                obj = torch.load(args.symbolic_ckpt, map_location=device, weights_only=True)
+            except TypeError:
+                obj = torch.load(args.symbolic_ckpt, map_location=device)
+
+            if isinstance(obj, dict) and "state_dict" in obj:
+                state = obj["state_dict"]
+                enc_args = obj.get("args", {}) if isinstance(obj.get("args", {}), dict) else {}
+            else:
+                state = obj
+                enc_args = {}
+
+            embed_dim = int(enc_args.get("embed_dim", 64))
+            width = int(enc_args.get("width", 32))
+
+            enc = SmallMaskEncoder(in_ch=2, embed_dim=embed_dim, width=width)
+            enc.load_state_dict(state, strict=False)
+            enc = enc.to(device).eval()
+            for p in enc.parameters():
+                p.requires_grad_(False)
+
+            sym_mask = SymbolicAlignment(
+                encoder=enc,
+                ema_global=EMAStats(dim=embed_dim, momentum=args.symbolic_ema_momentum),
+                ema_boundary=EMAStats(dim=embed_dim, momentum=args.symbolic_ema_momentum),
+            )
+            print(
+                f"[Symbolic:mask] enabled ckpt={args.symbolic_ckpt} lambda={args.symbolic_lambda} "
+                f"warmup={args.symbolic_warmup_steps} ema_m={args.symbolic_ema_momentum} conf_thr={args.symbolic_conf_thr}"
+            )
         else:
-            state = obj
-            enc_args = {}
+            if not args.multimodal_ckpt:
+                raise ValueError("--use_symbolic with --symbolic_mode multimodal requires --multimodal_ckpt")
 
-        embed_dim = int(enc_args.get("embed_dim", 64))
-        width = int(enc_args.get("width", 32))
+            try:
+                obj = torch.load(args.multimodal_ckpt, map_location=device, weights_only=True)
+            except TypeError:
+                obj = torch.load(args.multimodal_ckpt, map_location=device)
 
-        enc = SmallMaskEncoder(in_ch=2, embed_dim=embed_dim, width=width)
-        enc.load_state_dict(state, strict=False)
-        enc = enc.to(device).eval()
-        for p in enc.parameters():
-            p.requires_grad_(False)
+            if not (isinstance(obj, dict) and "state_dict" in obj):
+                raise ValueError("Expected multimodal checkpoint to be a dict with a 'state_dict' key.")
 
-        sym = SymbolicAlignment(
-            encoder=enc,
-            ema_global=EMAStats(dim=embed_dim, momentum=args.symbolic_ema_momentum),
-            ema_boundary=EMAStats(dim=embed_dim, momentum=args.symbolic_ema_momentum),
-        )
-        print(
-            f"[Symbolic] enabled ckpt={args.symbolic_ckpt} lambda={args.symbolic_lambda} "
-            f"warmup={args.symbolic_warmup_steps} ema_m={args.symbolic_ema_momentum} conf_thr={args.symbolic_conf_thr}"
-        )
+            state = obj["state_dict"]
+            cfg_d = obj.get("cfg", {}) if isinstance(obj.get("cfg", {}), dict) else {}
+            embed_dim = int(cfg_d.get("embed_dim", 64))
+            mask_width = int(cfg_d.get("mask_width", 32))
+            image_width = int(cfg_d.get("image_width", 32))
+            fusion = str(cfg_d.get("fusion", "mlp"))
+
+            # Rebuild the multimodal encoder and load weights.
+            mask_enc = SmallMaskEncoder(in_ch=2, embed_dim=embed_dim, width=mask_width)
+            mm = MultiModalSymbolicEncoder(mask_encoder=mask_enc, cfg=MultiModalConfig(embed_dim=embed_dim, mask_width=mask_width, image_width=image_width, fusion=fusion))
+            mm.load_state_dict(state, strict=False)
+            mm = mm.to(device).eval()
+            for p in mm.parameters():
+                p.requires_grad_(False)
+
+            sym_mm = MultiModalSymbolicAlignment(
+                encoder=mm,
+                ema_global=EMAStats(dim=embed_dim, momentum=args.symbolic_ema_momentum),
+                ema_boundary=EMAStats(dim=embed_dim, momentum=args.symbolic_ema_momentum),
+                output=args.multimodal_output,
+            )
+            print(
+                f"[Symbolic:multimodal] enabled ckpt={args.multimodal_ckpt} output={args.multimodal_output} lambda={args.symbolic_lambda} "
+                f"warmup={args.symbolic_warmup_steps} ema_m={args.symbolic_ema_momentum} conf_thr={args.symbolic_conf_thr}"
+            )
 
     model.train()
     step = 0
@@ -442,23 +523,31 @@ def main() -> None:
         if args.fg_prior_weight and args.fg_prior_weight > 0:
             loss = loss + float(args.fg_prior_weight) * fg_fraction_prior(lw, lw_t)
 
-        if sym is not None and step >= args.symbolic_warmup_steps:
+        if (sym_mask is not None or sym_mm is not None) and step >= args.symbolic_warmup_steps:
             p = torch.sigmoid(lw)
-            z_g, z_b = sym.compute_embeddings(p)
+            if sym_mm is not None:
+                z_g, z_b = sym_mm.compute_embeddings(xw, p)
+            else:
+                z_g, z_b = sym_mask.compute_embeddings(p)  # type: ignore[union-attr]
 
             # image-level confidence gate for updating priors
             conf = torch.maximum(p, 1.0 - p).mean(dim=(1, 2, 3))
             ok = conf >= args.symbolic_conf_thr
 
             # initialize priors on first usable batch
-            if sym.ema_global.mean is None and ok.any():
-                sym.update_priors(z_g, z_b, ok)
+            if sym_mm is not None:
+                sym_mm.update_priors(z_g, z_b, ok)
+                priors_ready = sym_mm.ema_global.mean is not None
             else:
-                sym.update_priors(z_g, z_b, ok)
+                sym_mask.update_priors(z_g, z_b, ok)  # type: ignore[union-attr]
+                priors_ready = sym_mask.ema_global.mean is not None  # type: ignore[union-attr]
 
             # only apply loss once priors exist
-            if sym.ema_global.mean is not None:
-                loss = loss + float(args.symbolic_lambda) * sym.loss(z_g, z_b)
+            if priors_ready:
+                if sym_mm is not None:
+                    loss = loss + float(args.symbolic_lambda) * sym_mm.loss(z_g, z_b)
+                else:
+                    loss = loss + float(args.symbolic_lambda) * sym_mask.loss(z_g, z_b)  # type: ignore[union-attr]
 
         loss.backward()
         optimizer.step()
